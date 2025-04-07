@@ -87,11 +87,11 @@ func SHA512(text string) string {
 }
 
 func CreateAuthTable(conn *pgx.Conn) error {
-	_, err := conn.Exec(context.Background(), "create table if not exists e-commerce.authentication (id serial primary key, name text, email text, password text, type int)")
+	_, err := conn.Exec(context.Background(), "create table if not exists e_commerce.authentication (id serial primary key, name text, email text, password text, type int)")
 	return err
 }
 
-func SignUp(c *gin.Context) { // needs testing
+func SignUp(c *gin.Context) {
 	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Println(err)
@@ -103,11 +103,12 @@ func SignUp(c *gin.Context) { // needs testing
 	json.NewDecoder(c.Request.Body).Decode(&information) //name, email, password, type
 
 	if err = CreateAuthTable(conn); err != nil {
+		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating a tablew for authentication"})
 		return
 	}
 
-	validEmail, err := regexp.MatchString(".*@.*/..*", information["email"])
+	validEmail, err := regexp.MatchString(".*@.*\\..*", information["email"])
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusForbidden, gin.H{"error": "Error invalid email"})
@@ -121,7 +122,7 @@ func SignUp(c *gin.Context) { // needs testing
 	}
 
 	var check string
-	err = conn.QueryRow(context.Background(), "select email from e-commerce.authentication where email = $1", information["email"]).Scan(&check)
+	err = conn.QueryRow(context.Background(), "select email from e_commerce.authentication where email = $1", information["email"]).Scan(&check)
 	emailExists := true
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -154,7 +155,7 @@ func SignUp(c *gin.Context) { // needs testing
 	}
 
 	hashedPassword := SHA512(information["password"])
-	_, err = conn.Exec(context.Background(), "insert into e-commerce.authentication (name, email, password, type) values ($1, $2, $3, $4)",
+	_, err = conn.Exec(context.Background(), "insert into e_commerce.authentication (name, email, password, type) values ($1, $2, $3, $4)",
 		information["name"], information["email"], hashedPassword, accountType)
 	if err != nil {
 		log.Println(err)
@@ -165,7 +166,7 @@ func SignUp(c *gin.Context) { // needs testing
 	c.JSON(http.StatusOK, nil)
 }
 
-func LogIn(c *gin.Context) { // needs testing
+func LogIn(c *gin.Context) {
 	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Println(err)
@@ -174,6 +175,7 @@ func LogIn(c *gin.Context) { // needs testing
 	}
 
 	if err = CreateAuthTable(conn); err != nil {
+		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err})
 		return
 	}
@@ -184,8 +186,8 @@ func LogIn(c *gin.Context) { // needs testing
 	var passwordCheck, name, email string
 	var accoutType byte
 	var id int
-	err = conn.QueryRow(context.Background(), "select id, password, name, type, email from e-commerce.authentication a where a.email = $1;", information["email"]).Scan(
-		&passwordCheck, &name, &accoutType, &email, &id)
+	err = conn.QueryRow(context.Background(), "select id, password, name, type, email from e_commerce.authentication a where a.email = $1;", information["email"]).Scan(
+		&id, &passwordCheck, &name, &accoutType, &email)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			log.Println(err)
@@ -214,7 +216,7 @@ func LogIn(c *gin.Context) { // needs testing
 	c.JSON(http.StatusOK, gin.H{"token": jwtToken})
 }
 
-func GetCurrentProfile(c *gin.Context) { // needs testing
+func GetCurrentProfile(c *gin.Context) {
 	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Println(err)
@@ -234,7 +236,7 @@ func GetCurrentProfile(c *gin.Context) { // needs testing
 	}
 
 	var name, email string
-	err = conn.QueryRow(context.Background(), "select name, email from e-commerce.authentication where id = $1", id).Scan(&name, &email)
+	err = conn.QueryRow(context.Background(), "select name, email from e_commerce.authentication where id = $1", id).Scan(&name, &email)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting information from the database"})

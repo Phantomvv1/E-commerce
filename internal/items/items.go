@@ -288,3 +288,23 @@ func GetAllItems(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
+
+func GetRandomItem(c *gin.Context) {
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	item := Item{}
+	err = conn.QueryRow(context.Background(), "select id, name, description from e_commerce.items limit 1").Scan(&item.ID, &item.Name, &item.Description)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"item": item})
+}

@@ -20,6 +20,7 @@ func main() {
 	r.POST("/item/get", GetItemByID)
 	r.POST("/item/search", SearchForItem)
 	r.GET("/items", GetAllItems)
+	r.GET("/item/rand", GetRandomItem)
 
 	r.Run(":42069")
 }

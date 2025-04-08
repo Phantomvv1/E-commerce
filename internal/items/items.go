@@ -202,3 +202,51 @@ func GetItemByID(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"item": item})
 }
+
+func SearchForItem(c *gin.Context) {
+	var information map[string]string
+	json.NewDecoder(c.Request.Body).Decode(&information)
+
+	name, ok := information["name"]
+	if !ok {
+		log.Println("Incorrectly provided name of the item")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided name of the item"})
+		return
+	}
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	rows, err := conn.Query(context.Background(), "select id, name, description from e_commerce.items i where i.name ~ $1", name)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
+		return
+	}
+
+	var items []Item
+	for rows.Next() {
+		item := Item{}
+		err = rows.Scan(&item.ID, &item.Name, &item.Description)
+		if err != nil {
+			log.Println(err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the information from the database"})
+			return
+		}
+
+		items = append(items, item)
+	}
+
+	if rows.Err() != nil {
+		log.Println(rows.Err())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the information from the database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}

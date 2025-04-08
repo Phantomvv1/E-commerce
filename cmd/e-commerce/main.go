@@ -19,6 +19,7 @@ func main() {
 	r.PUT("/item", UpdateItem)
 	r.POST("/item/get", GetItemByID)
 	r.POST("/item/search", SearchForItem)
+	r.GET("/items", GetAllItems)
 
 	r.Run(":42069")
 }

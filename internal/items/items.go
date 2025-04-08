@@ -250,3 +250,41 @@ func SearchForItem(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
+
+func GetAllItems(c *gin.Context) {
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	rows, err := conn.Query(context.Background(), "select id, name, description from e_commerce.items order by id")
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
+		return
+	}
+
+	var items []Item
+	for rows.Next() {
+		item := Item{}
+		err = rows.Scan(&item.ID, &item.Name, &item.Description)
+		if err != nil {
+			log.Println(err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the items"})
+			return
+		}
+
+		items = append(items, item)
+	}
+
+	if rows.Err() != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the items"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}

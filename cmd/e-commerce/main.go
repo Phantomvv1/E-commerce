@@ -16,6 +16,7 @@ func main() {
 	r.POST("/login", LogIn)
 	r.POST("/profile", GetCurrentProfile)
 	r.POST("/item", CreateItem)
+	r.PUT("/item", UpdateItem)
 
 	r.Run(":42069")
 }

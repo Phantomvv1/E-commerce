@@ -3,6 +3,7 @@ package items
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -84,7 +85,7 @@ func CreateItem(c *gin.Context) {
 	c.JSON(http.StatusOK, nil)
 }
 
-func UpdateItem(c *gin.Context) { // needs testing
+func UpdateItem(c *gin.Context) {
 	var information map[string]interface{}
 	json.NewDecoder(c.Request.Body).Decode(&information) // token && id && (name || desc)
 
@@ -139,21 +140,22 @@ func UpdateItem(c *gin.Context) { // needs testing
 	}
 
 	if updateName && updateDesc {
-		_, err = conn.Exec(context.Background(), "update e_commerce.items set name = $1, description = $2 where id = $3", name, desc, id)
+		_, err = conn.Exec(context.Background(), "update e_commerce.items set name = $1, description = $2 where id = $3", name, desc, itemID)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to update the information in the database"})
 			return
 		}
 	} else if updateName {
-		_, err = conn.Exec(context.Background(), "update e_commerce.items set name = $1 where id = $2", name, id)
+		_, err = conn.Exec(context.Background(), "update e_commerce.items set name = $1 where id = $2", name, itemID)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to update the information in the database"})
 			return
 		}
 	} else {
-		_, err = conn.Exec(context.Background(), "update e_commerce.items set description = $1 where id = $2", name, id)
+		fmt.Println("Here")
+		_, err = conn.Exec(context.Background(), "update e_commerce.items set description = $1 where id = $2", desc, itemID)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to update the information in the database"})

@@ -165,3 +165,40 @@ func UpdateItem(c *gin.Context) {
 
 	c.JSON(http.StatusOK, nil)
 }
+
+func GetItemByID(c *gin.Context) {
+	var information map[string]int
+	json.NewDecoder(c.Request.Body).Decode(&information)
+
+	id, ok := information["id"]
+	if !ok {
+		log.Println("Incorrectly provided id")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided id"})
+		return
+	}
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	item := Item{}
+	item.ID = id
+	err = conn.QueryRow(context.Background(), "select name, description from e_commerce.items where id = $1", item.ID).Scan(&item.Name, &item.Description)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			log.Println(err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Error there is no item with this id"})
+			return
+		}
+
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"item": item})
+}

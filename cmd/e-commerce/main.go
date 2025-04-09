@@ -22,6 +22,7 @@ func main() {
 	r.GET("/items", GetAllItems)
 	r.GET("/item/rand", GetRandomItem)
 	r.DELETE("/item", DeleteItem)
+	r.GET("/item/count", CountItems)
 
 	r.Run(":42069")
 }

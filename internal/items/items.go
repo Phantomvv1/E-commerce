@@ -380,3 +380,23 @@ func DeleteItem(c *gin.Context) {
 
 	c.JSON(http.StatusOK, nil)
 }
+
+func CountItems(c *gin.Context) {
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	count := 0
+	err = conn.QueryRow(context.Background(), "select count(*) from e_commerce.items").Scan(&count)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"count": count})
+}

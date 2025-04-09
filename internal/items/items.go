@@ -308,3 +308,57 @@ func GetRandomItem(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"item": item})
 }
+
+func DeleteItem(c *gin.Context) {
+	var information map[string]interface{}
+	json.NewDecoder(c.Request.Body).Decode(&information) // token && id
+
+	token, ok := information["token"].(string)
+	if !ok {
+		log.Println("Incorrectly provided token")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided token"})
+		return
+	}
+
+	_, accountType, err := ValidateJWT(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Error invalid token"})
+		return
+	}
+
+	if accountType != Admin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Error only admins can delete items"})
+		return
+	}
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	id, ok := information["id"].(float64)
+	if !ok {
+		log.Println("Incorrectly provided id of the item")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided id of the item"})
+		return
+	}
+
+	check := 0
+	err = conn.QueryRow(context.Background(), "delete from e_commerce.items where id = $1 returning id", id).Scan(&check)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Error there is no item with this id"})
+			return
+		}
+
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to delete the item from the database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, nil)
+}

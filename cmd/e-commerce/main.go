@@ -21,6 +21,7 @@ func main() {
 	r.POST("/item/search", SearchForItem)
 	r.GET("/items", GetAllItems)
 	r.GET("/item/rand", GetRandomItem)
+	r.DELETE("/item", DeleteItem)
 
 	r.Run(":42069")
 }

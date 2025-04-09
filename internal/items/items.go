@@ -3,7 +3,6 @@ package items
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,19 +13,20 @@ import (
 )
 
 type Item struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID          int     `json:"id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Price       float32 `json:"price"`
 }
 
 func CreateItemsTable(conn *pgx.Conn) error {
-	_, err := conn.Exec(context.Background(), "create table if not exists e_commerce.items (id serial primary key, name text, description text)")
+	_, err := conn.Exec(context.Background(), "create table if not exists e_commerce.items (id serial primary key, name text, description text, price numeric)")
 	return err
 }
 
 func CreateItem(c *gin.Context) {
 	var information map[string]interface{}
-	json.NewDecoder(c.Request.Body).Decode(&information) // token && name && description
+	json.NewDecoder(c.Request.Body).Decode(&information) // token && name && description && price
 
 	token, ok := information["token"].(string)
 	if !ok {
@@ -75,7 +75,14 @@ func CreateItem(c *gin.Context) {
 		return
 	}
 
-	_, err = conn.Exec(context.Background(), "insert into e_commerce.items (name, description) values ($1, $2)", name, desc)
+	price, ok := information["price"].(float64)
+	if !ok {
+		log.Println("Incorrectly provided price of the item")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided price of the item"})
+		return
+	}
+
+	_, err = conn.Exec(context.Background(), "insert into e_commerce.items (name, description, price) values ($1, $2, $3)", name, desc, price)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to put the information about the item in the database"})
@@ -87,7 +94,7 @@ func CreateItem(c *gin.Context) {
 
 func UpdateItem(c *gin.Context) {
 	var information map[string]interface{}
-	json.NewDecoder(c.Request.Body).Decode(&information) // token && id && (name || desc)
+	json.NewDecoder(c.Request.Body).Decode(&information) // token && id && (name || desc, || price)
 
 	token, ok := information["token"].(string)
 	if !ok {
@@ -132,35 +139,46 @@ func UpdateItem(c *gin.Context) {
 
 	updateDesc := true
 	desc, ok := information["description"].(string)
-	if !ok && !updateName {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Error no information provided for the update"})
-		return
-	} else if !ok {
+	if !ok {
 		updateDesc = false
 	}
 
-	if updateName && updateDesc {
-		_, err = conn.Exec(context.Background(), "update e_commerce.items set name = $1, description = $2 where id = $3", name, desc, itemID)
-		if err != nil {
-			log.Println(err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to update the information in the database"})
-			return
-		}
-	} else if updateName {
+	updatePrice := true
+	price, ok := information["price"].(float64)
+	if !ok && !updateDesc && !updateName {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error not enough information to update the item with"})
+		return
+	} else if !ok {
+		updatePrice = false
+	}
+
+	if updateName {
 		_, err = conn.Exec(context.Background(), "update e_commerce.items set name = $1 where id = $2", name, itemID)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to update the information in the database"})
 			return
 		}
-	} else {
-		fmt.Println("Here")
+	}
+
+	if updateDesc {
 		_, err = conn.Exec(context.Background(), "update e_commerce.items set description = $1 where id = $2", desc, itemID)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to update the information in the database"})
 			return
 		}
+
+	}
+
+	if updatePrice {
+		_, err = conn.Exec(context.Background(), "update e_commerce.items set price = $1 where id = $2", price, itemID)
+		if err != nil {
+			log.Println(err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to update the information in the database"})
+			return
+		}
+
 	}
 
 	c.JSON(http.StatusOK, nil)
@@ -187,7 +205,7 @@ func GetItemByID(c *gin.Context) {
 
 	item := Item{}
 	item.ID = id
-	err = conn.QueryRow(context.Background(), "select name, description from e_commerce.items where id = $1", item.ID).Scan(&item.Name, &item.Description)
+	err = conn.QueryRow(context.Background(), "select name, description, price from e_commerce.items where id = $1", item.ID).Scan(&item.Name, &item.Description, &item.Price)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			log.Println(err)
@@ -222,7 +240,7 @@ func SearchForItem(c *gin.Context) {
 	}
 	defer conn.Close(context.Background())
 
-	rows, err := conn.Query(context.Background(), "select id, name, description from e_commerce.items i where i.name ~ $1", name)
+	rows, err := conn.Query(context.Background(), "select id, name, description, price from e_commerce.items i where i.name ~ $1", name)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
@@ -232,7 +250,7 @@ func SearchForItem(c *gin.Context) {
 	var items []Item
 	for rows.Next() {
 		item := Item{}
-		err = rows.Scan(&item.ID, &item.Name, &item.Description)
+		err = rows.Scan(&item.ID, &item.Name, &item.Description, &item.Price)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the information from the database"})
@@ -260,7 +278,7 @@ func GetAllItems(c *gin.Context) {
 	}
 	defer conn.Close(context.Background())
 
-	rows, err := conn.Query(context.Background(), "select id, name, description from e_commerce.items order by id")
+	rows, err := conn.Query(context.Background(), "select id, name, description, price from e_commerce.items order by id")
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
@@ -270,7 +288,7 @@ func GetAllItems(c *gin.Context) {
 	var items []Item
 	for rows.Next() {
 		item := Item{}
-		err = rows.Scan(&item.ID, &item.Name, &item.Description)
+		err = rows.Scan(&item.ID, &item.Name, &item.Description, &item.Price)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the items"})
@@ -299,7 +317,7 @@ func GetRandomItem(c *gin.Context) {
 	defer conn.Close(context.Background())
 
 	item := Item{}
-	err = conn.QueryRow(context.Background(), "select id, name, description from e_commerce.items limit 1").Scan(&item.ID, &item.Name, &item.Description)
+	err = conn.QueryRow(context.Background(), "select id, name, description, price from e_commerce.items limit 1").Scan(&item.ID, &item.Name, &item.Description, &item.Price)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})

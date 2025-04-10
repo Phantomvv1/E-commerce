@@ -252,3 +252,63 @@ func GetCurrentProfile(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"profile": userProfile})
 }
+
+func GetAllUsers(c *gin.Context) {
+	var information map[string]string
+	json.NewDecoder(c.Request.Body).Decode(&information) // token
+
+	token, ok := information["token"]
+	if !ok {
+		log.Println("Incorrectly provided token")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided token"})
+		return
+	}
+
+	_, accountType, err := ValidateJWT(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Error invalid token"})
+		return
+	}
+
+	if accountType != Admin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Error only admins can view all of the accounts"})
+		return
+	}
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	rows, err := conn.Query(context.Background(), "select id, name, email, type from e_commerce.authentication")
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error couldn't get information from the database"})
+		return
+	}
+
+	var profiles []Profile
+	for rows.Next() {
+		profile := Profile{}
+		err = rows.Scan(&profile.ID, &profile.Name, &profile.Email, &profile.Type)
+		if err != nil {
+			log.Println(err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the data from the database"})
+			return
+		}
+
+		profiles = append(profiles, profile)
+	}
+
+	if rows.Err() != nil {
+		log.Println(rows.Err())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the data from the database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"profiles": profiles})
+}

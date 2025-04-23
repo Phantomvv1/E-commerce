@@ -27,6 +27,7 @@ func main() {
 	r.GET("/item/count", CountItems)
 	r.POST("/cart/item", AddItemToCart)
 	r.POST("/cart/items", GetItemsFromCart)
+	r.DELETE("/cart/item", RemoveItemFromCart)
 
 	r.Run(":42069")
 }

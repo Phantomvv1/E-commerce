@@ -25,22 +25,30 @@ func CreateCartTable(conn *pgx.Conn) error {
 }
 
 func AddItemToCart(c *gin.Context) {
-	var information map[string]int
-	json.NewDecoder(c.Request.Body).Decode(&information) // userID && itemID
+	var information map[string]interface{}
+	json.NewDecoder(c.Request.Body).Decode(&information) // token && itemID
 
-	userID, ok := information["userID"]
+	token, ok := information["token"].(string)
 	if !ok {
-		log.Println("Incorrectly provided id of the user")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided id of the user"})
+		log.Println("Incorrectly provided token of the user")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided token of the user"})
 		return
 	}
 
-	itemID, ok := information["itemID"]
+	userID, _, err := ValidateJWT(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error invalid token"})
+		return
+	}
+
+	itemIDFl, ok := information["itemID"].(float64)
 	if !ok {
 		log.Println("Incorrectly provided id of the item")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided id of the item"})
 		return
 	}
+	itemID := int(itemIDFl)
 
 	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -92,7 +100,7 @@ func GetItemsFromCart(c *gin.Context) {
 	}
 	defer conn.Close(context.Background())
 
-	rows, err := conn.Query(context.Background(), "select item_id from e_commerce.cart where user_id = $1", id)
+	rows, err := conn.Query(context.Background(), "select item_id from e_commerce.cart where user_id = $1 order by item_id", id)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
@@ -121,10 +129,14 @@ func GetItemsFromCart(c *gin.Context) {
 	query := "select name, description, price from e_commerce.items where id in ("
 
 	for i := range itemIDs {
-		query += "$" + fmt.Sprintf("%d", i+1)
+		if i == len(itemIDs)-1 {
+			query += "$" + fmt.Sprintf("%d", i+1)
+		} else {
+			query += "$" + fmt.Sprintf("%d", i+1) + ", "
+		}
 	}
 
-	query += ")"
+	query += ") order by id"
 
 	rows, err = conn.Query(context.Background(), query, itemIDs...)
 	if err != nil {
@@ -144,14 +156,53 @@ func GetItemsFromCart(c *gin.Context) {
 			return
 		}
 
-		item.ID, ok = itemIDs[index].(int)
-		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "What? This should have never happened!"})
-			return
-		}
-
+		item.ID, _ = itemIDs[index].(int)
+		index++
 		items = append(items, item)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"cart": items})
+}
+
+func RemoveItemFromCart(c *gin.Context) {
+	var information map[string]interface{}
+	json.NewDecoder(c.Request.Body).Decode(&information)
+
+	token, ok := information["token"].(string)
+	if !ok {
+		log.Println("Incorrectly provided token")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided token"})
+		return
+	}
+
+	id, _, err := ValidateJWT(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Error invalid token"})
+		return
+	}
+
+	itemID, ok := information["itemID"].(float64)
+	if !ok {
+		log.Println("Id of the item is not provided correctly")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error id of the item is not provided correctly"})
+		return
+	}
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	_, err = conn.Exec(context.Background(), "delete from e_commerce.cart where user_id = $1 and item_id = $2", id, itemID)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to remove the item from your cart"})
+		return
+	}
+
+	c.JSON(http.StatusOK, nil)
 }

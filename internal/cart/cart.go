@@ -174,6 +174,11 @@ func GetItemsFromCart(c *gin.Context) {
 
 	query += ") order by id"
 
+	if query == "select name, description, price from e_commerce.items where id in () order by id" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Error there are no items in your cart"})
+		return
+	}
+
 	rows, err = conn.Query(context.Background(), query, itemIDs...)
 	if err != nil {
 		log.Println(err)

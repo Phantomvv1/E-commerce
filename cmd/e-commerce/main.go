@@ -28,6 +28,8 @@ func main() {
 	r.POST("/cart/item", AddItemToCart)
 	r.POST("/cart/items", GetItemsFromCart)
 	r.DELETE("/cart/item", RemoveItemFromCart)
+	r.POST("/cart/item/count", CountItemsInCart)
+	r.POST("/cart/pay", Checkout)
 
 	r.Run(":42069")
 }

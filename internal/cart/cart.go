@@ -18,6 +18,42 @@ type Cart struct {
 	Items []Item `json:"items"`
 }
 
+func getCartPrice(conn *pgx.Conn, userId int) (float32, error) {
+	rows, err := conn.Query(context.Background(), "select c.item_id from e_commerce.cart c where user_id = $1", userId)
+	if err != nil {
+		return 0.0, err
+	}
+
+	var itemIDs []interface{}
+	for rows.Next() {
+		itemID := 0
+		err = rows.Scan(&itemID)
+		if err != nil {
+			return 0.0, err
+		}
+
+		itemIDs = append(itemIDs, itemID)
+	}
+
+	query := "select sum(i.price) from e_commerce.items i where i.id in ("
+	for i := range itemIDs {
+		if i == len(itemIDs)-1 {
+			query += "$" + fmt.Sprintf("%d", i+1)
+		} else {
+			query += "$" + fmt.Sprintf("%d", i+1) + ", "
+		}
+	}
+	query += ")"
+
+	var price float32
+	err = conn.QueryRow(context.Background(), query, itemIDs...).Scan(&price)
+	if err != nil {
+		return 0.0, err
+	}
+
+	return price, nil
+}
+
 func CreateCartTable(conn *pgx.Conn) error {
 	_, err := conn.Exec(context.Background(), "create table if not exists e_commerce.cart (id serial primary key, item_id int references e_commerce.items (id)"+
 		", user_id int references e_commerce.authentication(id))")
@@ -242,4 +278,50 @@ func CountItemsInCart(c *gin.Context) { // to test
 	}
 
 	c.JSON(http.StatusOK, gin.H{"count": count})
+}
+
+func Checkout(c *gin.Context) {
+	var information map[string]string
+	json.NewDecoder(c.Request.Body).Decode(&information)
+
+	token, ok := information["token"]
+	if !ok {
+		log.Println("Incorrectly provided token")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided token"})
+		return
+	}
+
+	id, _, err := ValidateJWT(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Error invalid token"})
+		return
+	}
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	price, err := getCartPrice(conn, id)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
+		return
+	}
+
+	// TODO: Add real payment later
+	log.Println(price)
+
+	_, err = conn.Exec(context.Background(), "delete from e_commerce.cart where user_id = $1", id)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to remove the items from the cart after paying"})
+		return
+	}
+
+	c.JSON(http.StatusOK, nil)
 }

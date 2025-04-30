@@ -30,6 +30,7 @@ func main() {
 	r.DELETE("/cart/item", RemoveItemFromCart)
 	r.POST("/cart/item/count", CountItemsInCart)
 	r.POST("/cart/pay", Checkout)
+	r.DELETE("/cart/all", RemoveEverythingFromCart)
 
 	r.Run(":42069")
 }

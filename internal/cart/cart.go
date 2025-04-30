@@ -3,6 +3,7 @@ package cart
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -44,6 +45,10 @@ func getCartPrice(conn *pgx.Conn, userId int) (float32, error) {
 		}
 	}
 	query += ")"
+
+	if len(itemIDs) == 0 {
+		return 0.0, errors.New("There are no items in your cart")
+	}
 
 	var price float32
 	err = conn.QueryRow(context.Background(), query, itemIDs...).Scan(&price)
@@ -325,6 +330,48 @@ func Checkout(c *gin.Context) {
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to remove the items from the cart after paying"})
+		return
+	}
+
+	c.JSON(http.StatusOK, nil)
+}
+
+func RemoveEverythingFromCart(c *gin.Context) {
+	var information map[string]string
+	json.NewDecoder(c.Request.Body).Decode(&information)
+
+	token, ok := information["token"]
+	if !ok {
+		log.Println("Incorrectly provided token")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided token"})
+		return
+	}
+
+	id, _, err := ValidateJWT(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Error invalid token"})
+		return
+	}
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	check := 0
+	err = conn.QueryRow(context.Background(), "delete from e_commerce.cart where user_id = $1 returning id", id).Scan(&check)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Error there are no items in your cart"})
+			return
+		}
+
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to remove the items from your cart"})
 		return
 	}
 

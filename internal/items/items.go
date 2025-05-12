@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"os"
 
@@ -316,8 +317,30 @@ func GetRandomItem(c *gin.Context) {
 	}
 	defer conn.Close(context.Background())
 
+	rows, err := conn.Query(context.Background(), "select id from e_commerce.items")
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
+		return
+	}
+
+	var IDarr []int
+	for rows.Next() {
+		id := 0
+		err = rows.Scan(&id)
+		if err != nil {
+			log.Println(err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting information from the database"})
+			return
+		}
+
+		IDarr = append(IDarr, id)
+	}
+
 	item := Item{}
-	err = conn.QueryRow(context.Background(), "select id, name, description, price from e_commerce.items limit 1").Scan(&item.ID, &item.Name, &item.Description, &item.Price)
+	item.ID = IDarr[rand.IntN(len(IDarr))]
+
+	err = conn.QueryRow(context.Background(), "select name, description, price from e_commerce.items where id = $1", item.ID).Scan(&item.Name, &item.Description, &item.Price)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})

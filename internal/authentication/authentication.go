@@ -100,7 +100,7 @@ func SignUp(c *gin.Context) {
 	}
 
 	var information map[string]string
-	json.NewDecoder(c.Request.Body).Decode(&information) //name, email, password, type
+	json.NewDecoder(c.Request.Body).Decode(&information) //name, email, password, type, company_name
 
 	if err = CreateAuthTable(conn); err != nil {
 		log.Println(err)

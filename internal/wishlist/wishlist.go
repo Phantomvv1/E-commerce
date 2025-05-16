@@ -88,7 +88,7 @@ func GetItemFromWishlist(c *gin.Context) {
 		return
 	}
 
-	itemID, ok := information["itemID"].(string)
+	itemID, ok := information["itemID"].(float64)
 	if !ok {
 		log.Println("Incorrectly provided id of the item")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided id of teh item"})
@@ -96,7 +96,7 @@ func GetItemFromWishlist(c *gin.Context) {
 	}
 
 	item := Item{}
-	item.ID = item.ID
+	item.ID = int(itemID)
 
 	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -155,7 +155,7 @@ func GetAllItemsFromWishlist(c *gin.Context) {
 	}
 	defer conn.Close(context.Background())
 
-	rows, err := conn.Query(context.Background(), "select item_id from e_commecre.wishlist w where w.user_id = $1", id)
+	rows, err := conn.Query(context.Background(), "select item_id from e_commerce.wishlist w where w.user_id = $1", id)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
@@ -192,6 +192,11 @@ func GetAllItemsFromWishlist(c *gin.Context) {
 
 	query += ")"
 
+	if query == "select name, description, price from e_commerce.items i where id in ()" {
+		c.JSON(http.StatusOK, gin.H{"message": "There are no items in your wishlist"})
+		return
+	}
+
 	rows, err = conn.Query(context.Background(), query, itemIDs...)
 	if err != nil {
 		log.Println(err)
@@ -223,4 +228,54 @@ func GetAllItemsFromWishlist(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func RemoveItemFromWishlist(c *gin.Context) {
+	var information map[string]interface{}
+	json.NewDecoder(c.Request.Body).Decode(&information)
+
+	token, ok := information["token"].(string)
+	if !ok {
+		log.Println("Incorrectly provided token")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided token"})
+		return
+	}
+
+	id, _, err := ValidateJWT(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error invalid token"})
+		return
+	}
+
+	itemIDFl, ok := information["itemID"].(float64)
+	if !ok {
+		log.Println("Incorrectly provided id of the item")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided id of the item"})
+		return
+	}
+	itemID := int(itemIDFl)
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	check := 0
+	err = conn.QueryRow(context.Background(), "delete from e_commerce.wishlist where user_id = $1 and item_id = $2 returning id", id, itemID).Scan(&check)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			c.JSON(http.StatusNotExtended, gin.H{"error": "Error there is no item with this id in your wishlist"})
+			return
+		}
+
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to delete the information from the database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, nil)
 }

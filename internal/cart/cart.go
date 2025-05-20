@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	. "github.com/Phantomvv1/E-commerce/internal/authentication"
 	. "github.com/Phantomvv1/E-commerce/internal/items"
@@ -17,6 +18,55 @@ import (
 
 type Cart struct {
 	Items []Item `json:"items"`
+}
+
+type Coupon struct {
+	ID             int       `json:"id"`
+	ExpirationDate time.Time `json:"expirationDate"`
+	Discount       uint8     `json:"discount"`
+	CouponNumber   int       `json:"couponNumber"`
+}
+
+func (c Coupon) IsValid(conn *pgx.Conn) bool {
+	if c.ExpirationDate.Unix() < time.Now().Unix() {
+		return false
+	} else if c.Discount > 100 {
+		return false
+	}
+
+	check := false
+	err := conn.QueryRow(context.Background(), "select id, used from e_commerce.coupons c where c.number = $1", c.CouponNumber).Scan(&c.ID, &check)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return true
+		}
+
+		return false
+	}
+
+	if check {
+		return false
+	}
+
+	return true
+}
+
+func (c *Coupon) GetCoupon(conn *pgx.Conn, userID int) error {
+	used := false
+	err := conn.QueryRow(context.Background(), "select id, exp_date, discount, number, used from e_commerce.coupons c where c.used = false and c.exp_date > current_date").
+		Scan(&c.ID, &c.ExpirationDate, &c.Discount, &c.CouponNumber, &used)
+	if err != nil {
+		log.Println(err)
+		return errors.New("Unable to get the coupon from the database")
+	}
+
+	return nil
+}
+
+func CreateCouponsTable(conn *pgx.Conn) error {
+	_, err := conn.Exec(context.Background(), "create table if not exists e_commerce.coupons (id serial primary key, user_id int references e_commerce.authentication(id) on delete cascade, "+
+		"exp_date date, discount int, number int, used boolean)")
+	return err
 }
 
 func getCartPrice(conn *pgx.Conn, userId int) (float32, error) {
@@ -412,4 +462,85 @@ func GetCartPrice(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"price": price})
+}
+
+func ApplyCoupon(c *gin.Context) {
+	var information map[string]interface{}
+	json.NewDecoder(c.Request.Body).Decode(&information) //token && expDate && couponNumber && discount
+
+	token, ok := information["token"].(string)
+	if !ok {
+		log.Println("Incorrectly provided token")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided token"})
+		return
+	}
+
+	id, _, err := ValidateJWT(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Error invalid token"})
+		return
+	}
+
+	coupon := Coupon{}
+
+	expDate, ok := information["expirationDate"].(string)
+	if !ok {
+		log.Println("Incorrectly provided expiration date of the coupon")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided expiration date of the coupon"})
+		return
+	}
+
+	coupon.ExpirationDate, err = time.Parse(time.DateOnly, expDate)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to parse the given date"})
+		return
+	}
+
+	number, ok := information["couponNumber"].(float64)
+	if !ok {
+		log.Println("Incorrectly provided the coupon number")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided the coupon number"})
+		return
+	}
+	coupon.CouponNumber = int(number)
+
+	discount, ok := information["discount"].(float64)
+	if !ok {
+		log.Println("Incorrectly provided the discount of the coupon")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided the discount of the coupon"})
+		return
+	}
+	coupon.Discount = uint8(discount)
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	if err = CreateCouponsTable(conn); err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to create a table for the coupons"})
+		return
+	}
+
+	if !coupon.IsValid(conn) {
+		log.Println("Invalid coupon")
+		c.JSON(http.StatusNotAcceptable, gin.H{"error": "Error invalid coupon"})
+		return
+	}
+
+	_, err = conn.Exec(context.Background(), "insert into e_commerce.coupons (exp_date, discount, number, user_id, used) values ($1, $2, $3, $4, false)",
+		coupon.ExpirationDate, coupon.Discount, coupon.CouponNumber, id)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to put the information in the database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, nil)
 }

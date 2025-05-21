@@ -24,7 +24,7 @@ type Coupon struct {
 	ID             int       `json:"id"`
 	ExpirationDate time.Time `json:"expirationDate"`
 	Discount       uint8     `json:"discount"`
-	CouponNumber   int       `json:"couponNumber"`
+	CouponNumber   uint      `json:"couponNumber"`
 }
 
 func (c Coupon) IsValid(conn *pgx.Conn) bool {
@@ -35,12 +35,14 @@ func (c Coupon) IsValid(conn *pgx.Conn) bool {
 	}
 
 	check := false
-	err := conn.QueryRow(context.Background(), "select id, used from e_commerce.coupons c where c.number = $1", c.CouponNumber).Scan(&c.ID, &check)
+	id := 0
+	err := conn.QueryRow(context.Background(), "select id, used from e_commerce.coupons c where c.number = $1", c.CouponNumber).Scan(&id, &check)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return true
 		}
 
+		log.Println(err)
 		return false
 	}
 
@@ -52,12 +54,15 @@ func (c Coupon) IsValid(conn *pgx.Conn) bool {
 }
 
 func (c *Coupon) GetCoupon(conn *pgx.Conn, userID int) error {
-	used := false
-	err := conn.QueryRow(context.Background(), "select id, exp_date, discount, number, used from e_commerce.coupons c where c.used = false and c.exp_date > current_date").
-		Scan(&c.ID, &c.ExpirationDate, &c.Discount, &c.CouponNumber, &used)
+	err := conn.QueryRow(context.Background(), "select id, exp_date, discount, number from e_commerce.coupons c where c.used = false and c.exp_date > current_date and user_id = $1", userID).
+		Scan(&c.ID, &c.ExpirationDate, &c.Discount, &c.CouponNumber)
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			return errors.New("Error there is no valid coupon for this user")
+		}
+
 		log.Println(err)
-		return errors.New("Unable to get the coupon from the database")
+		return errors.New("Error unable to get the coupon from the database")
 	}
 
 	return nil
@@ -373,15 +378,28 @@ func Checkout(c *gin.Context) {
 		return
 	}
 
-	// TODO: Add real payment later
-	log.Println(price)
+	coupon := Coupon{}
+	if err = coupon.GetCoupon(conn, id); err != nil {
+		if err.Error() == "Error there is no valid coupon for this user" {
+			_, err = conn.Exec(context.Background(), "delete from e_commerce.cart where user_id = $1", id)
+			if err != nil {
+				log.Println(err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to remove the items from the cart after paying"})
+				return
+			}
 
-	_, err = conn.Exec(context.Background(), "delete from e_commerce.cart where user_id = $1", id)
-	if err != nil {
-		log.Println(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to remove the items from the cart after paying"})
+			c.JSON(http.StatusOK, nil)
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	discountedPrice := price - (price * float32(coupon.Discount) / 100)
+
+	// TODO: Add real payment later
+	log.Println(discountedPrice)
 
 	c.JSON(http.StatusOK, nil)
 }
@@ -461,7 +479,20 @@ func GetCartPrice(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"price": price})
+	coupon := Coupon{}
+	if err = coupon.GetCoupon(conn, id); err != nil {
+		if err.Error() == "Error there is no valid coupon for this user" {
+			c.JSON(http.StatusOK, gin.H{"price": price})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	discountedPrice := price - (price * float32(coupon.Discount) / 100)
+
+	c.JSON(http.StatusOK, gin.H{"price": discountedPrice})
 }
 
 func ApplyCoupon(c *gin.Context) {
@@ -504,7 +535,7 @@ func ApplyCoupon(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided the coupon number"})
 		return
 	}
-	coupon.CouponNumber = int(number)
+	coupon.CouponNumber = uint(number)
 
 	discount, ok := information["discount"].(float64)
 	if !ok {
@@ -539,6 +570,56 @@ func ApplyCoupon(c *gin.Context) {
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to put the information in the database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, nil)
+}
+
+func RemoveCoupon(c *gin.Context) {
+	var information map[string]interface{}
+	json.NewDecoder(c.Request.Body).Decode(&information) // token && couponNumber
+
+	token, ok := information["token"].(string)
+	if !ok {
+		log.Println("Incorrectly provided token")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided token"})
+		return
+	}
+
+	id, _, err := ValidateJWT(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Error invalid token"})
+		return
+	}
+
+	couponNumberFL, ok := information["couponNumber"].(float64)
+	if !ok {
+		log.Println("Incorrectly provided the number of the coupon")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided the number of the coupon"})
+		return
+	}
+	couponNumber := uint(couponNumberFL)
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	check := 0
+	err = conn.QueryRow(context.Background(), "delete from e_commerce.coupons where user_id = $1 and number = $2 returning id", id, couponNumber).Scan(&check)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Error there is no coupon with this number for this user"})
+			return
+		}
+
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to delete the information from the database"})
 		return
 	}
 

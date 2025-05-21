@@ -37,6 +37,8 @@ func main() {
 	r.POST("/wishlist/item", GetItemFromWishlist)
 	r.POST("/wishlist/items", GetAllItemsFromWishlist)
 	r.DELETE("/wishlist/item", RemoveItemFromWishlist)
+	r.POST("/coupon", ApplyCoupon)
+	r.DELETE("/coupon", RemoveCoupon)
 
 	r.Run(":42069")
 }

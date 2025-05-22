@@ -34,9 +34,8 @@ func (c Coupon) IsValid(conn *pgx.Conn) bool {
 		return false
 	}
 
-	check := false
 	id := 0
-	err := conn.QueryRow(context.Background(), "select id, used from e_commerce.coupons c where c.number = $1", c.CouponNumber).Scan(&id, &check)
+	err := conn.QueryRow(context.Background(), "select id, used from e_commerce.coupons c where c.number = $1", c.CouponNumber).Scan(&id)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return true
@@ -46,11 +45,7 @@ func (c Coupon) IsValid(conn *pgx.Conn) bool {
 		return false
 	}
 
-	if check {
-		return false
-	}
-
-	return true
+	return false
 }
 
 func (c *Coupon) GetCoupon(conn *pgx.Conn, userID int) error {

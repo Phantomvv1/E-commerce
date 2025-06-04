@@ -63,6 +63,11 @@ func (c *Coupon) GetCoupon(conn *pgx.Conn, userID int) error {
 	return nil
 }
 
+func givePurchasePoints(conn *pgx.Conn, purchasePoints, id int) error {
+	_, err := conn.Exec(context.Background(), "update e_commerce.authentication set points = points + $1 where id = $2", purchasePoints, id)
+	return err
+}
+
 func CreateCouponsTable(conn *pgx.Conn) error {
 	_, err := conn.Exec(context.Background(), "create table if not exists e_commerce.coupons (id serial primary key, user_id int references e_commerce.authentication(id) on delete cascade, "+
 		"exp_date date, discount int, number int, used boolean)")
@@ -383,7 +388,18 @@ func Checkout(c *gin.Context) {
 				return
 			}
 
-			c.JSON(http.StatusOK, nil)
+			purchasePoints := int(price * 10)
+
+			// TODO: Add real payment later
+			log.Println(price)
+
+			if err = givePurchasePoints(conn, purchasePoints, id); err != nil {
+				log.Println(err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to give purcahase points to the user"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"price": price})
 			return
 		}
 
@@ -395,6 +411,21 @@ func Checkout(c *gin.Context) {
 
 	// TODO: Add real payment later
 	log.Println(discountedPrice)
+
+	_, err = conn.Exec(context.Background(), "delete from e_commerce.cart where user_id = $1", id)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to remove the items from the cart after paying"})
+		return
+	}
+
+	purchasePoints := int(discountedPrice * 10)
+
+	if err = givePurchasePoints(conn, purchasePoints, id); err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to give purcahase points to the user"})
+		return
+	}
 
 	c.JSON(http.StatusOK, nil)
 }

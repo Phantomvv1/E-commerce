@@ -23,10 +23,11 @@ const (
 )
 
 type Profile struct {
-	ID    int    `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	Type  byte   `json:"type"`
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Email  string `json:"email"`
+	Type   byte   `json:"type"`
+	Points int    `json:"points"`
 }
 
 func GenerateJWT(id int, accountType byte, email string) (string, error) {
@@ -87,7 +88,7 @@ func SHA512(text string) string {
 }
 
 func CreateAuthTable(conn *pgx.Conn) error {
-	_, err := conn.Exec(context.Background(), "create table if not exists e_commerce.authentication (id serial primary key, name text, email text, password text, type int)")
+	_, err := conn.Exec(context.Background(), "create table if not exists e_commerce.authentication (id serial primary key, name text, email text, password text, type int, points int)")
 	return err
 }
 
@@ -155,7 +156,7 @@ func SignUp(c *gin.Context) {
 	}
 
 	hashedPassword := SHA512(information["password"])
-	_, err = conn.Exec(context.Background(), "insert into e_commerce.authentication (name, email, password, type) values ($1, $2, $3, $4)",
+	_, err = conn.Exec(context.Background(), "insert into e_commerce.authentication (name, email, password, type, points) values ($1, $2, $3, $4, 0)",
 		information["name"], information["email"], hashedPassword, accountType)
 	if err != nil {
 		log.Println(err)
@@ -236,7 +237,8 @@ func GetCurrentProfile(c *gin.Context) {
 	}
 
 	var name, email string
-	err = conn.QueryRow(context.Background(), "select name, email from e_commerce.authentication where id = $1", id).Scan(&name, &email)
+	points := 0
+	err = conn.QueryRow(context.Background(), "select name, email, points from e_commerce.authentication where id = $1", id).Scan(&name, &email, &points)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting information from the database"})
@@ -244,10 +246,11 @@ func GetCurrentProfile(c *gin.Context) {
 	}
 
 	userProfile := Profile{
-		ID:    id,
-		Name:  name,
-		Email: email,
-		Type:  accountType,
+		ID:     id,
+		Name:   name,
+		Email:  email,
+		Points: points,
+		Type:   accountType,
 	}
 
 	c.JSON(http.StatusOK, gin.H{"profile": userProfile})
@@ -284,7 +287,7 @@ func GetAllUsers(c *gin.Context) {
 	}
 	defer conn.Close(context.Background())
 
-	rows, err := conn.Query(context.Background(), "select id, name, email, type from e_commerce.authentication")
+	rows, err := conn.Query(context.Background(), "select id, name, email, type, points from e_commerce.authentication")
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error couldn't get information from the database"})
@@ -294,7 +297,7 @@ func GetAllUsers(c *gin.Context) {
 	var profiles []Profile
 	for rows.Next() {
 		profile := Profile{}
-		err = rows.Scan(&profile.ID, &profile.Name, &profile.Email, &profile.Type)
+		err = rows.Scan(&profile.ID, &profile.Name, &profile.Email, &profile.Type, &profile.Points)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the data from the database"})

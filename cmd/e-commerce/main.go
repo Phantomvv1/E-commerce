@@ -5,6 +5,7 @@ import (
 
 	. "github.com/Phantomvv1/E-commerce/internal/authentication"
 	. "github.com/Phantomvv1/E-commerce/internal/cart"
+	. "github.com/Phantomvv1/E-commerce/internal/comparison"
 	. "github.com/Phantomvv1/E-commerce/internal/items"
 	. "github.com/Phantomvv1/E-commerce/internal/wishlist"
 	"github.com/gin-gonic/gin"
@@ -39,6 +40,9 @@ func main() {
 	r.DELETE("/wishlist/item", RemoveItemFromWishlist)
 	r.POST("/coupon", ApplyCoupon)
 	r.DELETE("/coupon", RemoveCoupon)
+	r.POST("/compare/item", AddItemToCompare)
+	r.POST("/compare", Compare)
+	r.DELETE("/compare/item", RemoveItemFromComparison)
 
 	r.Run(":42069")
 }

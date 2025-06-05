@@ -24,6 +24,20 @@ func CreateComparisonTable(conn *pgx.Conn) error {
 	return err
 }
 
+func ItemExists(conn *pgx.Conn, itemID int) (bool, error) {
+	id := 0
+	err := conn.QueryRow(context.Background(), "select id from e_commerce.items where id = $1", itemID).Scan(&id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	return true, nil
+}
+
 func AddItemToCompare(c *gin.Context) {
 	var information map[string]interface{}
 	json.NewDecoder(c.Request.Body).Decode(&information) // token && itemID
@@ -58,7 +72,25 @@ func AddItemToCompare(c *gin.Context) {
 	}
 	defer conn.Close(context.Background())
 
-	_, err = conn.Exec(context.Background(), "insert into table e_commerce.comparison (user_id, item_id) values ($1, $2)", id, itemID)
+	if err = CreateComparisonTable(conn); err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to create a table for the comparison"})
+		return
+	}
+
+	exists, err := ItemExists(conn, itemID)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error checking if an item with such an ID exists"})
+		return
+	}
+
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Error there is no item with this id in this shop"})
+		return
+	}
+
+	_, err = conn.Exec(context.Background(), "insert into e_commerce.comparison (user_id, item_id) values ($1, $2)", id, itemID)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to put the information in the database"})
@@ -89,19 +121,19 @@ func Compare(c *gin.Context) {
 	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Println(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to coonect to the database"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
 		return
 	}
 	defer conn.Close(context.Background())
 
-	rows, err := conn.Query(context.Background(), "select itemID from e_commerce.comparison where userID = $1", id)
+	rows, err := conn.Query(context.Background(), "select item_id from e_commerce.comparison where user_id = $1", id)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get the information about the items you want to compare from the database"})
 		return
 	}
 
-	itemIDs := []int{}
+	var itemIDs []interface{}
 	for rows.Next() {
 		itemID := 0
 		err = rows.Scan(&itemID)
@@ -128,4 +160,87 @@ func Compare(c *gin.Context) {
 			query += "$" + fmt.Sprintf("%d", i+1) + ", "
 		}
 	}
+	query += ") order by id"
+
+	rows, err = conn.Query(context.Background(), query, itemIDs...)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get the items you want to compare from the database"})
+		return
+	}
+
+	items := []Item{}
+	i := 0
+	for rows.Next() {
+		item := Item{}
+		err = rows.Scan(&item.Name, &item.Description, &item.Price)
+		if err != nil {
+			log.Println(err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to correctly get all the information about the items from the database"})
+			return
+		}
+
+		item.ID = itemIDs[i].(int)
+		i++
+
+		items = append(items, item)
+	}
+
+	if rows.Err() != nil {
+		log.Println(rows.Err())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to work with the items you have selected"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func RemoveItemFromComparison(c *gin.Context) {
+	var information map[string]interface{}
+	json.NewDecoder(c.Request.Body).Decode(&information)
+
+	token, ok := information["token"].(string)
+	if !ok {
+		log.Println("Incorrectly provided token")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided token"})
+		return
+	}
+
+	id, _, err := ValidateJWT(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Error invalid token"})
+		return
+	}
+
+	itemIDFl, ok := information["itemID"].(float64)
+	if !ok {
+		log.Println("Incorrectly provided id of the item")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error incorrectly provided id of the item"})
+		return
+	}
+	itemID := int(itemIDFl)
+
+	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to connect to the database"})
+		return
+	}
+	defer conn.Close(context.Background())
+
+	check := 0
+	err = conn.QueryRow(context.Background(), "delete from e_commerce.comparison where user_id = $1 and item_id = $2 returning user_id", id, itemID).Scan(&check)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Error there is no item with this id in your comparison list"})
+			return
+		}
+
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to remove this item from your comparison list"})
+		return
+	}
+
+	c.JSON(http.StatusOK, nil)
 }

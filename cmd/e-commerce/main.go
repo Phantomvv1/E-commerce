@@ -43,6 +43,7 @@ func main() {
 	r.POST("/compare/item", AddItemToCompare)
 	r.POST("/compare", Compare)
 	r.DELETE("/compare/item", RemoveItemFromComparison)
+	r.DELETE("/compare/items", RemoveAllItemsFromComparison)
 
 	r.Run(":42069")
 }

@@ -27,6 +27,11 @@ type Coupon struct {
 	CouponNumber   uint      `json:"couponNumber"`
 }
 
+type CartItem struct {
+	Item     Item `json:"item"`
+	Quantity int  `json:"quantity"`
+}
+
 func (c Coupon) IsValid(conn *pgx.Conn) bool {
 	if c.ExpirationDate.Unix() < time.Now().Unix() {
 		return false
@@ -60,6 +65,10 @@ func (c *Coupon) GetCoupon(conn *pgx.Conn, userID int) error {
 		return errors.New("Error unable to get the coupon from the database")
 	}
 
+	if c.ExpirationDate.Unix() < time.Now().Unix() {
+		return errors.New("Error invalid coupon")
+	}
+
 	return nil
 }
 
@@ -75,23 +84,30 @@ func CreateCouponsTable(conn *pgx.Conn) error {
 }
 
 func getCartPrice(conn *pgx.Conn, userId int) (float32, error) {
-	rows, err := conn.Query(context.Background(), "select c.item_id from e_commerce.cart c where user_id = $1", userId)
+	rows, err := conn.Query(context.Background(), "select c.item_id, quantity from e_commerce.cart c where user_id = $1 order by c.item_id", userId)
 	if err != nil {
 		return 0.0, err
 	}
 
 	var itemIDs []interface{}
+	var quantities []int
 	for rows.Next() {
 		itemID := 0
-		err = rows.Scan(&itemID)
+		quantity := 0
+		err = rows.Scan(&itemID, &quantity)
 		if err != nil {
 			return 0.0, err
 		}
 
 		itemIDs = append(itemIDs, itemID)
+		quantities = append(quantities, quantity)
 	}
 
-	query := "select sum(i.price) from e_commerce.items i where i.id in ("
+	if rows.Err() != nil {
+		return 0.0, rows.Err()
+	}
+
+	query := "select i.price from e_commerce.items i where i.id in ("
 	for i := range itemIDs {
 		if i == len(itemIDs)-1 {
 			query += "$" + fmt.Sprintf("%d", i+1)
@@ -99,16 +115,36 @@ func getCartPrice(conn *pgx.Conn, userId int) (float32, error) {
 			query += "$" + fmt.Sprintf("%d", i+1) + ", "
 		}
 	}
-	query += ")"
+	query += ") order by i.id"
+
+	if query == "select i.price from e_commerce.items i where i.id in () order by i.id" {
+		return 0.0, errors.New("Error there are no items in this person's cart")
+	}
 
 	if len(itemIDs) == 0 {
 		return 0.0, errors.New("There are no items in your cart")
 	}
 
-	var price float32
-	err = conn.QueryRow(context.Background(), query, itemIDs...).Scan(&price)
+	rows, err = conn.Query(context.Background(), query, itemIDs...)
 	if err != nil {
 		return 0.0, err
+	}
+
+	var price float32 = 0
+	index := 0
+	for rows.Next() {
+		innerPrice := 0.0
+		err = rows.Scan(&innerPrice)
+		if err != nil {
+			return 0.0, err
+		}
+
+		price = float32(innerPrice) * float32(quantities[index])
+		index++
+	}
+
+	if rows.Err() != nil {
+		return 0.0, rows.Err()
 	}
 
 	return price, nil
@@ -116,13 +152,27 @@ func getCartPrice(conn *pgx.Conn, userId int) (float32, error) {
 
 func CreateCartTable(conn *pgx.Conn) error {
 	_, err := conn.Exec(context.Background(), "create table if not exists e_commerce.cart (id serial primary key, item_id int references e_commerce.items (id)"+
-		", user_id int references e_commerce.authentication(id))")
+		", user_id int references e_commerce.authentication(id), quantity int)")
 	return err
+}
+
+func ItemAlreadyInCart(conn *pgx.Conn, itemID, userID int) (bool, error) {
+	check := 0
+	err := conn.QueryRow(context.Background(), "select id from e_commerce.cart where item_id = $1 and user_id = $2", itemID, userID).Scan(&check)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	return true, nil
 }
 
 func AddItemToCart(c *gin.Context) {
 	var information map[string]interface{}
-	json.NewDecoder(c.Request.Body).Decode(&information) // token && itemID
+	json.NewDecoder(c.Request.Body).Decode(&information) // token && itemID && quantity
 
 	token, ok := information["token"].(string)
 	if !ok {
@@ -131,7 +181,7 @@ func AddItemToCart(c *gin.Context) {
 		return
 	}
 
-	userID, _, err := ValidateJWT(token)
+	id, _, err := ValidateJWT(token)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Error invalid token"})
@@ -145,6 +195,12 @@ func AddItemToCart(c *gin.Context) {
 		return
 	}
 	itemID := int(itemIDFl)
+
+	quantityFl, ok := information["quantity"].(float64)
+	if !ok {
+		quantityFl = 1
+	}
+	quantity := int(quantityFl)
 
 	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -160,7 +216,21 @@ func AddItemToCart(c *gin.Context) {
 		return
 	}
 
-	_, err = conn.Exec(context.Background(), "insert into e_commerce.cart (item_id, user_id) values ($1, $2)", itemID, userID)
+	inCart, err := ItemAlreadyInCart(conn, itemID, id)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
+		return
+	}
+
+	if inCart {
+		c.JSON(http.StatusConflict, gin.H{"error": "Error item is already in cart"})
+		return
+	}
+
+	// ItemExists()
+
+	_, err = conn.Exec(context.Background(), "insert into e_commerce.cart (item_id, user_id, quantity) values ($1, $2, $3)", itemID, id, quantity)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to put the information in the database"})
@@ -196,7 +266,7 @@ func GetItemsFromCart(c *gin.Context) {
 	}
 	defer conn.Close(context.Background())
 
-	rows, err := conn.Query(context.Background(), "select item_id from e_commerce.cart where user_id = $1 order by item_id", id)
+	rows, err := conn.Query(context.Background(), "select item_id, quantity from e_commerce.cart where user_id = $1 order by item_id", id)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get information from the database"})
@@ -204,9 +274,11 @@ func GetItemsFromCart(c *gin.Context) {
 	}
 
 	var itemIDs []interface{}
+	var quantities []int
 	for rows.Next() {
 		itemID := 0
-		err = rows.Scan(&itemID)
+		quantity := 0
+		err = rows.Scan(&itemID, &quantity)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the information from the database"})
@@ -214,6 +286,7 @@ func GetItemsFromCart(c *gin.Context) {
 		}
 
 		itemIDs = append(itemIDs, itemID)
+		quantities = append(quantities, quantity)
 	}
 
 	if rows.Err() != nil {
@@ -246,18 +319,19 @@ func GetItemsFromCart(c *gin.Context) {
 		return
 	}
 
-	var items []Item
+	var items []CartItem
 	index := 0
 	for rows.Next() {
-		item := Item{}
-		err = rows.Scan(&item.Name, &item.Description, &item.Price)
+		item := CartItem{}
+		err = rows.Scan(&item.Item.Name, &item.Item.Description, &item.Item.Price)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error working with the information about the items"})
 			return
 		}
 
-		item.ID, _ = itemIDs[index].(int)
+		item.Item.ID, _ = itemIDs[index].(int)
+		item.Quantity = quantities[index]
 		index++
 		items = append(items, item)
 	}
@@ -335,7 +409,7 @@ func CountItemsInCart(c *gin.Context) { // to test
 	defer conn.Close(context.Background())
 
 	count := 0
-	err = conn.QueryRow(context.Background(), "select count(*) from e_commerce.cart c where c.id = $1", id).Scan(&count)
+	err = conn.QueryRow(context.Background(), "select sum(c.quantity) from e_commerce.cart c where c.user_id = $1", id).Scan(&count)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error couldn't get information from the database"})
@@ -504,6 +578,7 @@ func GetCartPrice(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Println(price)
 
 	coupon := Coupon{}
 	if err = coupon.GetCoupon(conn, id); err != nil {

@@ -11,9 +11,13 @@ import (
 	"time"
 
 	. "github.com/Phantomvv1/E-commerce/internal/authentication"
+	. "github.com/Phantomvv1/E-commerce/internal/comparison"
 	. "github.com/Phantomvv1/E-commerce/internal/items"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	"github.com/stripe/stripe-go/v82"
+	"github.com/stripe/stripe-go/v82/customer"
+	"github.com/stripe/stripe-go/v82/paymentintent"
 )
 
 type Cart struct {
@@ -170,6 +174,40 @@ func ItemAlreadyInCart(conn *pgx.Conn, itemID, userID int) (bool, error) {
 	return true, nil
 }
 
+func Pay(email string, ammount int64) (string, error) {
+	params := &stripe.CustomerParams{
+		Email:            stripe.String(email),
+		Description:      stripe.String("Payment for buying an item"),
+		PreferredLocales: stripe.StringSlice([]string{"bg", "en"}),
+	}
+
+	c, err := customer.New(params)
+	if err != nil {
+		return "", err
+	}
+
+	paymentIntentParams := &stripe.PaymentIntentParams{
+		Amount:   stripe.Int64(ammount),
+		Customer: stripe.String(c.ID),
+		Currency: stripe.String(stripe.CurrencyBGN),
+		AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
+			Enabled: stripe.Bool(true),
+		},
+	}
+
+	pi, err := paymentintent.New(paymentIntentParams)
+	if err != nil {
+		if stripeErr, ok := err.(*stripe.Error); ok {
+			log.Println(stripeErr)
+			return "", errors.New("Stripe error")
+		}
+
+		return "", err
+	}
+
+	return pi.ClientSecret, nil
+}
+
 func AddItemToCart(c *gin.Context) {
 	var information map[string]interface{}
 	json.NewDecoder(c.Request.Body).Decode(&information) // token && itemID && quantity
@@ -228,7 +266,17 @@ func AddItemToCart(c *gin.Context) {
 		return
 	}
 
-	// ItemExists()
+	exists, err := ItemExists(conn, itemID)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error couldn't get information if this item exists from the database"})
+		return
+	}
+
+	if !exists {
+		c.JSON(http.StatusConflict, gin.H{"error": "Error this item doesn't exist"})
+		return
+	}
 
 	_, err = conn.Exec(context.Background(), "insert into e_commerce.cart (item_id, user_id, quantity) values ($1, $2, $3)", itemID, id, quantity)
 	if err != nil {
@@ -464,16 +512,27 @@ func Checkout(c *gin.Context) {
 
 			purchasePoints := int(price * 10)
 
-			// TODO: Add real payment later
-			log.Println(price)
-
 			if err = givePurchasePoints(conn, purchasePoints, id); err != nil {
 				log.Println(err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to give purcahase points to the user"})
 				return
 			}
 
-			c.JSON(http.StatusOK, gin.H{"price": price})
+			email, err := GetEmail(token)
+			if err != nil {
+				log.Println(err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get the email of the person from their token"})
+				return
+			}
+
+			secret, err := Pay(email, int64(price)*100)
+			if err != nil {
+				log.Println(err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to pay"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"secret": secret})
 			return
 		}
 
@@ -482,9 +541,6 @@ func Checkout(c *gin.Context) {
 	}
 
 	discountedPrice := price - (price * float32(coupon.Discount) / 100)
-
-	// TODO: Add real payment later
-	log.Println(discountedPrice)
 
 	_, err = conn.Exec(context.Background(), "delete from e_commerce.cart where user_id = $1", id)
 	if err != nil {
@@ -501,7 +557,21 @@ func Checkout(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, nil)
+	email, err := GetEmail(token)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to get the email of teh person from their token"})
+		return
+	}
+
+	secret, err := Pay(email, int64(discountedPrice)*100)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to pay"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"secret": secret})
 }
 
 func RemoveEverythingFromCart(c *gin.Context) {

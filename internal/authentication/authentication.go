@@ -80,6 +80,29 @@ func ValidateJWT(tokenString string) (int, byte, error) {
 	return int(id), byte(accountType), nil
 }
 
+func GetEmail(tokenString string) (string, error) {
+	claims := &jwt.MapClaims{}
+
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.ErrUnsupported
+		}
+
+		return []byte(os.Getenv("JWT_KEY")), nil
+	})
+
+	if err != nil || !token.Valid {
+		return "", err
+	}
+
+	email, ok := (*claims)["email"].(string)
+	if !ok {
+		return "", errors.New("Error unable to parse the email of the person")
+	}
+
+	return email, nil
+}
+
 func SHA512(text string) string {
 	algorithm := sha512.New()
 	algorithm.Write([]byte(text))

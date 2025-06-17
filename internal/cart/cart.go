@@ -174,7 +174,9 @@ func ItemAlreadyInCart(conn *pgx.Conn, itemID, userID int) (bool, error) {
 	return true, nil
 }
 
-func Pay(email string, ammount int64) (string, error) {
+func Pay(email string, ammount int64) (string, error) { //test
+	stripe.Key = os.Getenv("STRIPE_KEY")
+
 	params := &stripe.CustomerParams{
 		Email:            stripe.String(email),
 		Description:      stripe.String("Payment for buying an item"),
@@ -467,7 +469,7 @@ func CountItemsInCart(c *gin.Context) { // to test
 	c.JSON(http.StatusOK, gin.H{"count": count})
 }
 
-func Checkout(c *gin.Context) {
+func Checkout(c *gin.Context) { // test
 	var information map[string]string
 	json.NewDecoder(c.Request.Body).Decode(&information)
 

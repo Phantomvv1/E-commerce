@@ -11,7 +11,7 @@ import (
 	"gopkg.in/gomail.v2"
 )
 
-func SendEmail(c *gin.Context) { // to test
+func SendEmail(c *gin.Context) {
 	var information map[string]string
 	json.NewDecoder(c.Request.Body).Decode(&information) // token && subject && text
 
@@ -53,14 +53,14 @@ func SendEmail(c *gin.Context) { // to test
 	}
 
 	m := gomail.NewMessage()
-	m.SetHeader("From", os.Getenv("FROM_EMAIL"))
+	m.SetHeader("From", os.Getenv("SMTP_USERNAME"))
 	m.SetHeader("To", email)
 	m.SetHeader("Subject", subject)
 	m.SetBody("text/plain", text)
 
-	dialer := gomail.NewDialer(os.Getenv("FROM_SMTP"), 587, os.Getenv("SMTP_USERNAME"), os.Getenv("SMTP_PASSWORD"))
+	dialer := gomail.NewDialer(os.Getenv("SMTP_FROM"), 465, os.Getenv("SMTP_USERNAME"), os.Getenv("SMTP_PASSWORD"))
 
-	if err = dialer.DialAndSend(); err != nil {
+	if err = dialer.DialAndSend(m); err != nil {
 		log.Println(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error unable to send the email to the person"})
 		return

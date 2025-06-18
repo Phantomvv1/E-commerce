@@ -36,8 +36,6 @@ func SendEmail(c *gin.Context) {
 		return
 	}
 
-	log.Println(email)
-
 	subject, ok := information["subject"]
 	if !ok {
 		log.Println("Incorrectly provided subject of the email")
